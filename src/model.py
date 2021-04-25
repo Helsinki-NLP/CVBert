@@ -924,6 +924,8 @@ class CVBertLayer(nn.Module):
 
         self.combination_fc = nn.Linear(config.hidden_size + config.z_dim, config.hidden_size)
 
+        self.training_step = Torch.tensor(0, requires_grad = False)
+
         #ikinci attention
         #phi-MLP
         #theta-MLP
@@ -966,8 +968,11 @@ class CVBertLayer(nn.Module):
 
         # Exit of original BertLayer:
         # return outputs
+        # ---
 
         cv_inputs = outputs
+
+        #FIXME: head_mask ne? past_key_value ne?
 
         cv_in_hidden_states = 
         cv_in_attention_mask = 
@@ -989,9 +994,9 @@ class CVBertLayer(nn.Module):
 
 
         if module.training:
-            z_sample = sample_gaussian(post_mu, post_logvar)
+            z_sample = self.sample_gaussian(post_mu, post_logvar)
         else:
-            z_sample = sample_gaussian(prior_mu, prior_logvar)
+            z_sample = self.sample_gaussian(prior_mu, prior_logvar)
 
 
         # Predicting y
@@ -1004,16 +1009,33 @@ class CVBertLayer(nn.Module):
 
 
         # ELBO-loss calculation
+        def loss_function(recon_x, x, mu, log_var):
+            BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction='sum')
+            KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+            return BCE + KLD
+
         self.global_step = tf.Variable(0, trainable=False)
         crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.targets, logits=self.logits)
 
         self.total_loss = tf.reduce_sum(crossent * self.weights)
 
-        kl_weights = tf.minimum(tf.to_float(self.global_step) / 20000, 1.0)
+        
         kld = gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
         self.loss = tf.reduce_mean(crossent * self.weights) + tf.reduce_mean(kld) * kl_weights       
 
 
+        if module.training:
+            BCE = F.binary_cross_entropy(y_prediction, user_group_labels, reduction='sum')
+
+            kl_weights = torch.minimum(self.training_step / 20000, 1.0)
+            KLD = self.gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
+
+            elbo_loss = BCE + kl_weights * KLD
+
+            self.training_step += 1
+
+
+        # Preparing output
 
 
     def feed_forward_chunk(self, attention_output):
@@ -1022,12 +1044,17 @@ class CVBertLayer(nn.Module):
         return layer_output
 
 
-    def sample_gaussian(mu, logvar):
-        epsilon = tf.random_normal(tf.shape(logvar), name="epsilon")
-        std = tf.exp(0.5 * logvar)
-        z= mu + tf.multiply(std, epsilon)
-        return z 
+    def sample_gaussian(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add(mu) # return z sample
 
+
+    def gaussian_kld(self, recog_mu, recog_logvar, prior_mu, prior_logvar):
+        kld = -0.5 * tf.reduce_sum(1 + (recog_logvar - prior_logvar)
+                               - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
+                               - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
+        return kld
 
 
 
