@@ -900,8 +900,7 @@ class BertForPreTraining(BertPreTrainedModel):
 
 
 
-
-
+'''
 class CVBertLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -967,9 +966,8 @@ class CVBertLayer(nn.Module):
         outputs = (layer_output,) + outputs
 
         # Exit of original BertLayer:
-        # return outputs
-        # ---
-
+        return outputs
+        
         cv_inputs = outputs
 
         #FIXME: head_mask ne? past_key_value ne?
@@ -1009,19 +1007,18 @@ class CVBertLayer(nn.Module):
 
 
         # ELBO-loss calculation
-        def loss_function(recon_x, x, mu, log_var):
-            BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction='sum')
-            KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-            return BCE + KLD
+        #def loss_function(recon_x, x, mu, log_var):
+        #    BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction='sum')
+        #    KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        #    return BCE + KLD
 
-        self.global_step = tf.Variable(0, trainable=False)
-        crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.targets, logits=self.logits)
+        #self.global_step = tf.Variable(0, trainable=False)
+        #crossent = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=self.targets, logits=self.logits)
 
-        self.total_loss = tf.reduce_sum(crossent * self.weights)
+        #self.total_loss = tf.reduce_sum(crossent * self.weights)
 
-        
-        kld = gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
-        self.loss = tf.reduce_mean(crossent * self.weights) + tf.reduce_mean(kld) * kl_weights       
+        #kld = gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
+        #self.loss = tf.reduce_mean(crossent * self.weights) + tf.reduce_mean(kld) * kl_weights       
 
 
         if module.training:
@@ -1055,15 +1052,14 @@ class CVBertLayer(nn.Module):
                                - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
                                - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
         return kld
+'''
 
-
-
-
+'''
 class CVBertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.layer = nn.ModuleList([CVBertLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
 
     def forward(
         self,
@@ -1077,6 +1073,7 @@ class CVBertEncoder(nn.Module):
         output_attentions=False,
         output_hidden_states=False,
         return_dict=True,
+        user_group_labels=user_group_labels
     ):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1154,30 +1151,291 @@ class CVBertEncoder(nn.Module):
             attentions=all_self_attentions,
             cross_attentions=all_cross_attentions,
         )
+'''
+
+@dataclass
+class CVBertOutput(ModelOutput):
+    last_hidden_state: torch.FloatTensor = None
+    user_group_scores: torch.FloatTensor = None
+    post_mu: Optional[torch.FloatTensor] = None
+    post_logvar: Optional[torch.FloatTensor] = None
+    prior_mu: torch.FloatTensor = None
+    prior_logvar: torch.FloatTensor = Nones
+    #past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
+    #hidden_states: Optional[Tuple[torch.FloatTensor]] = None
+    attentions: Optional[Tuple[torch.FloatTensor]] = None
+    #cross_attentions: Optional[Tuple[torch.FloatTensor]] = None
+   
+
+
+class CVBertLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.chunk_size_feed_forward = config.chunk_size_feed_forward
+        self.seq_len_dim = 1
+
+        self.output = BertOutput(config)
+
+        self.cv_attention = BertAttention(config)
+        self.posterior_net_fc1 = nn.Linear(config.hidden_size + config.y_dim, config.z_inter_dim)
+        self.posterior_net_fc2 = nn.Linear(config.z_inter_dim,  config.z_dim * 2)
+        self.prior_net_fc1 = nn.Linear(config.hidden_size, config.z_inter_dim)
+        self.prior_net_fc2 = nn.Linear(config.z_inter_dim, config.z_dim * 2)
+        self.z_dropout = nn.Dropout(config.z_dropout_prob)
+
+        self.y_predictor_net_fc1 = nn.Linear(config.hidden_size + config.z_dim, config.y_inter_dim)
+        self.y_predictor_net_fc2 = nn.Linear(config.y_inter_dim, config.y_dim)
+        self.y_dropout = nn.Dropout(config.y_dropout_prob)
+
+        self.combination_fc = nn.Linear(config.hidden_size + config.z_dim, config.hidden_size)
+
+
+        #ikinci attention
+        #phi-MLP
+        #theta-MLP
+        #y-generator-MLP
+        #W_c linear layer
+
+        #ELBO loss hesaplayip donmeli. 
+
+        #Burdan donen deger (1) bir sonraki layer'a, (2) CVBert'e nasil aktariliyor?
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        past_key_value=None,
+        output_attentions=False,
+        output_hidden_states=False,
+        return_dict=False,
+        user_group_labels=None,
+    ):
+
+        '''
+        BertEncoder'in inputu:
+        encoder_outputs = BertEncoder(
+            attention_mask=extended_attention_mask,
+            head_mask=head_mask,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_extended_attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            user_group_labels=user_group_labels)
+        '''
+
+        #FIXME: head_mask ne? past_key_value ne?
+        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
+        self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        attention_outputs = self.cv_attention(
+            hidden_states,
+            attention_mask,
+            head_mask,
+            output_attentions=output_attentions,
+            past_key_value=self_attn_past_key_value,
+        )
+        cv_x = attention_outputs[0]
+        
+        # Sampling z
+        post_mu = None
+        post_logvar = None
+        if user_group_labels is not None:
+            post_inter = self.z_dropout(F.tanh(self.posterior_net_fc1(torch.cat([cv_x, user_group_labels], dim=0)))
+            post_mulogvar = self.posterior_net_fc1(post_inter)
+            post_mu, post_logvar = post_mulogvar[:config.z_dim], post_mulogvar[config.z_dim:]
+
+        prior_inter = self.z_dropout(F.tanh(self.prior_net_fc1(cv_x)))
+        prior_mulogvar = self.prior_net_fc1(prior_inter)
+        prior_mu, prior_logvar = prior_mulogvar[:config.z_dim], prior_mulogvar[config.z_dim:]
+
+
+        if user_group_labels is not None:
+            z_sample = self.sample_gaussian(post_mu, post_logvar)
+        else:
+            z_sample = self.sample_gaussian(prior_mu, prior_logvar)
+
+
+        # Predicting y
+        y_inter = self.y_dropout(F.tanh(self.y_predictor_net_fc1(torch.cat([cv_x, z_sample], dim=0))))
+        y_prediction = self.y_predictor_net_fc2(y_inter)
+
+        
+
+        # Combining z with hidden representations
+        #cv_output_hidden = self.combination_fc(torch.cat[cv_inputs[0], z_sample])
+        combined_representation = torch.cat[cv_inputs[0], z_sample]
+        layer_output = apply_chunking_to_forward(
+            self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, combined_representation
+        )
+        #outputs = (layer_output,) + other_outputs
+
+        if output_attentions:
+            self_attentions = attention_outputs[1]
+        else:
+            self_attentions = None
+
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_states,)
+
+        if not return_dict:
+            return tuple(
+                v
+                for v in [
+                    layer_output,
+                    y_prediction,
+                    post_mu,
+                    post_logvar,
+                    prior_mu,
+                    prior_logvar,
+                    self_attentions
+                ]
+                if v is not None
+            )
+        return CVBertOutput(
+            last_hidden_state=layer_output,
+            #past_key_values=next_decoder_cache,
+            #hidden_states=all_hidden_states,
+            user_group_scores=y_prediction,
+            post_mu=post_mu,
+            post_logvar=post_logvar,
+            prior_mu=prior_mu,
+            prior_logvar=prior_logvar,
+            attentions=self_attentions,
+            #cross_attentions=all_cross_attentions,
+        )
+
+        return outputs
+
+
+    def feed_forward_chunk(self, combined_representation):
+        #intermediate_output = self.intermediate(attention_output)
+        #layer_output = self.output(intermediate_output, attention_output)
+        layer_output = self.combination_fc(combined_representation)
+        return layer_output
+
+
+    def sample_gaussian(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return eps.mul(std).add(mu) # return z sample
+
+
+
+class CVBertEncoder(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        past_key_values=None,
+        use_cache=None,
+        output_attentions=False,
+        output_hidden_states=False,
+        return_dict=True,
+        user_group_labels=user_group_labels
+    ):
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attentions = () if output_attentions else None
+        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
+
+        next_decoder_cache = () if use_cache else None
+        for i, layer_module in enumerate(self.layer):
+            if output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_states,)
+
+            layer_head_mask = head_mask[i] if head_mask is not None else None
+            past_key_value = past_key_values[i] if past_key_values is not None else None
+
+            if getattr(self.config, "gradient_checkpointing", False) and self.training:
+
+                if use_cache:
+                    logger.warning(
+                        "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
+                        "`use_cache=False`..."
+                    )
+                    use_cache = False
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs, past_key_value, output_attentions)
+
+                    return custom_forward
+
+                layer_outputs = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(layer_module),
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                )
+            else:
+                layer_outputs = layer_module(
+                    hidden_states,
+                    attention_mask,
+                    layer_head_mask,
+                    encoder_hidden_states,
+                    encoder_attention_mask,
+                    past_key_value,
+                    output_attentions,
+                )
+
+            hidden_states = layer_outputs[0]
+            if use_cache:
+                next_decoder_cache += (layer_outputs[-1],)
+            if output_attentions:
+                all_self_attentions = all_self_attentions + (layer_outputs[1],)
+                if self.config.add_cross_attention:
+                    all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_states,)
+
+        if not return_dict:
+            return tuple(
+                v
+                for v in [
+                    hidden_states,
+                    next_decoder_cache,
+                    all_hidden_states,
+                    all_self_attentions,
+                    all_cross_attentions,
+                ]
+                if v is not None
+            )
+        return CVBertOutput(
+            last_hidden_state=hidden_states,
+            past_key_values=next_decoder_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attentions,
+            cross_attentions=all_cross_attentions,
+        )
+
 
 
 class CVBert(BertPreTrainedModel):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well as a decoder, in which case a layer of
-    cross-attention is added between the self-attention layers, following the architecture described in `Attention is
-    all you need <https://arxiv.org/abs/1706.03762>`__ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit,
-    Llion Jones, Aidan N. Gomez, Lukasz Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the :obj:`is_decoder` argument of the configuration
-    set to :obj:`True`. To be used in a Seq2Seq model, the model needs to initialized with both :obj:`is_decoder`
-    argument and :obj:`add_cross_attention` set to :obj:`True`; an :obj:`encoder_hidden_states` is then expected as an
-    input to the forward pass.
-    """
 
     def __init__(self, config, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
 
         self.embeddings = BertEmbeddings(config)
-        self.encoder = CVBertEncoder(config)
+        self.encoder = BertEncoder(config)
+        self.cv_layer = CVLayer(config)
 
-        self.pooler = BertPooler(config) if add_pooling_layer else None
+        #self.pooler = BertPooler(config) if add_pooling_layer else None
 
         self.init_weights()
 
@@ -1301,24 +1559,39 @@ class CVBert(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            #user_group_labels=user_group_labels
+        )
+
+        cv_outputs = self.cv_layer(
+            encoder_outputs,
+            attention_mask=extended_attention_mask, #FIXME: extended_attention_mask nedir? Aynen kullanabilir miyim?
+            head_mask=head_mask,
+            encoder_hidden_states=encoder_hidden_states,
+            encoder_attention_mask=encoder_extended_attention_mask,
+            past_key_values=past_key_values,
+            #use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
             user_group_labels=user_group_labels
         )
-        sequence_output = encoder_outputs[0]
-        #pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
+
+        #sequence_output = cv_outputs[0]
         if not return_dict:
             #return (sequence_output, pooled_output) + encoder_outputs[1:]
-            return encoder_outputs
+            return cv_outputs
 
         return CVBertOutput(
-            last_hidden_state=sequence_output,
-            user_group_scores=encoder_outputs.user_group_scores
-            elbo_loss=encoder_outputs.elbo_loss
-            #pooler_output=pooled_output,
-            past_key_values=encoder_outputs.past_key_values,
-            hidden_states=encoder_outputs.hidden_states,
-            attentions=encoder_outputs.attentions,
-            #cross_attentions=encoder_outputs.cross_attentions,
+            last_hidden_state=cv_outputs.sequence_output,
+            user_group_scores=cv_outputs.user_group_scores,
+            post_mu=cv_outputs.post_mu,
+            post_logvar=cv_outputs.post_logvar,
+            prior_mu=cv_outputs.prior_mu,
+            prior_logvar=cv_outputs.prior_logvar,
+            #past_key_values=encoder_outputs.past_key_values,
+            #hidden_states=encoder_outputs.hidden_states,
+            attentions=encoder_outputs.attentions,     
         )
 
 
@@ -1328,6 +1601,8 @@ class CVBertForTraining(BertPreTrainedModel):
 
         self.bert = CVBert(config)
         self.cls = BertOnlyMLMHead(config)
+
+        self.training_step = Torch.tensor(0, requires_grad = False)
 
         self.init_weights()
 
@@ -1394,48 +1669,50 @@ class CVBertForTraining(BertPreTrainedModel):
             user_group_labels=user_group_labels
         )
 
-        sequence_output = outputs[0]
-        user_group_scores = outputs[1]
-        
+        if not return_dict:
+            sequence_output = outputs[0]
+            user_group_scores = outputs[1]
+            post_mu = outputs[2]
+            post_logvar = outputs[3]
+            prior_mu = outputs[4]
+            prior_logvar = outputs[5]
+        else:
+            sequence_output = outputs.sequence_output
+            user_group_scores = outputs.user_group_scores
+            post_mu = outputs.post_mu
+            post_logvar = outputs.post_logvar
+            prior_mu = outputs.prior_mu
+            prior_logvar = outputs.prior_logvar
+
+
         prediction_scores = self.cls(sequence_output)
 
         total_loss = None
         if labels is not None and user_group_labels is not None:
-            elbo_loss = outputs[2]
-            loss_fct = CrossEntropyLoss()
+
+            # FIXME: Nature of this loss function and user_group_scores/user_group_labels
+            # needs further thought.
+            #BCE = F.binary_cross_entropy(user_group_scores, user_group_labels, reduction='sum')
+            CE = torch.nn.CrossEntropyLoss(user_group_scores, user_group_labels)
+
+            kl_weights = torch.minimum(self.training_step / 20000, 1.0)
+            KLD = self.gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
+
+            elbo_loss = CE + kl_weights * KLD
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
             total_loss = masked_lm_loss + elbo_loss
 
+            self.training_step += 1
+
+
         if not return_dict:
             output = outputs
-            return ((total_loss,) + output) if total_loss is not None else output
+            return ((total_loss,masked_lm_loss,elbo_loss) + output) if total_loss is not None else output
 
         return CVBertForTrainingOutput(
             loss=total_loss,
-            prediction_logits=prediction_scores,
-            user_group_logits=user_group_scores,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
-
-        '''
-        # BertForPreTraining'den kopyaladigim hali:
-        sequence_output, pooled_output = outputs[:2]
-        prediction_scores, user_group_scores = self.cls(sequence_output, pooled_output)
-
-        total_loss = None
-        if labels is not None and user_group_labels is not None:
-            loss_fct = CrossEntropyLoss()
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
-            user_group_loss = loss_fct(user_group_scores.view(-1, 2), user_group_labels.view(-1))
-            total_loss = masked_lm_loss + user_group_loss
-
-        if not return_dict:
-            output = (prediction_scores, user_group_scores) + outputs[2:]
-            return ((total_loss,) + output) if total_loss is not None else output
-
-        return CVBertForTrainingOutput(
-            loss=total_loss,
+            masked_lm_loss=masked_lm_loss,
+            elbo_loss=elbo_loss,
             prediction_logits=prediction_scores,
             user_group_logits=user_group_scores,
             hidden_states=outputs.hidden_states,
@@ -1443,5 +1720,9 @@ class CVBertForTraining(BertPreTrainedModel):
         )
 
 
-       
-        '''
+
+    def gaussian_kld(self, recog_mu, recog_logvar, prior_mu, prior_logvar):
+        kld = -0.5 * tf.reduce_sum(1 + (recog_logvar - prior_logvar)
+                               - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
+                               - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
+        return kld
