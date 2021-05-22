@@ -1,26 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-# Copyright 2021 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-Fine-tuning the library models for masked language modeling (BERT, ALBERT, RoBERTa...)
-on a text file or a dataset without using HuggingFace Trainer.
-
-Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
-https://huggingface.co/models?filter=masked-lm
-"""
-# You can also adapt this script on your own mlm task. Pointers for this are left as comments.
+# Modified from HuggingFace script https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm_no_trainer.py
 
 import argparse
 import logging
@@ -34,10 +14,7 @@ from datasets import load_dataset
 from torch.utils.data.dataloader import DataLoader
 from tqdm.auto import tqdm
 
-#+++HANDE
 import sys
-sys.path.insert(0, "/scratch/project_2002233/CV-BERT/transformers/src/")
-#---HANDE
 
 import transformers
 from accelerate import Accelerator
@@ -53,6 +30,9 @@ from transformers import (
     get_scheduler,
     set_seed,
 )
+
+from src.model import CVBertForTraining
+from src.data_collator import DataCollatorForCVBert
 
 
 logger = logging.getLogger(__name__)
