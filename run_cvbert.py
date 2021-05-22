@@ -25,14 +25,16 @@ from transformers import (
     AutoConfig,
     AutoModelForMaskedLM,
     AutoTokenizer,
-    DataCollatorForCVBert,
     SchedulerType,
     get_scheduler,
     set_seed,
 )
 
+from src.config import CVBertConfig
 from src.model import CVBertForTraining
 from src.data_collator import DataCollatorForCVBert
+
+
 
 
 logger = logging.getLogger(__name__)
@@ -255,6 +257,9 @@ def main():
     #
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
+    
+    #+++HANDE
+    '''
     if args.config_name:
         config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
@@ -262,6 +267,9 @@ def main():
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
+    '''
+    config = CVBertConfig()
+    #---HANDE
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, use_fast=not args.use_slow_tokenizer)
@@ -273,6 +281,7 @@ def main():
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
 
+    '''
     if args.model_name_or_path:
         model = AutoModelForMaskedLM.from_pretrained(
             args.model_name_or_path,
@@ -283,7 +292,11 @@ def main():
         logger.info("Training new model from scratch")
         model = AutoModelForMaskedLM.from_config(config)
 
-    model.resize_token_embeddings(len(tokenizer))
+    '''
+
+    model = CVBertForTraining(config)
+
+    #model.resize_token_embeddings(len(tokenizer))
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -458,9 +471,11 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
 
+
     for epoch in range(args.num_train_epochs):
         model.train()
         for step, batch in enumerate(train_dataloader):
+            print(batch)
             outputs = model(**batch)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps

@@ -17,12 +17,13 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, NewType, Optional, Tuple, Union
 
+import sys
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from ..file_utils import PaddingStrategy
-from ..modeling_utils import PreTrainedModel
-from ..tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
+from transformers.file_utils import PaddingStrategy
+from transformers.modeling_utils import PreTrainedModel
+from transformers.tokenization_utils_base import BatchEncoding, PreTrainedTokenizerBase
 
 
 InputDataClass = NewType("InputDataClass", Any)
@@ -790,8 +791,8 @@ class DataCollatorForCVBert:
         print(batch)
 
         #+++HANDE
-        import sys
-        sys.exit(1)
+        #import sys
+        #sys.exit(1)
         #---HANDE
         
         return batch
