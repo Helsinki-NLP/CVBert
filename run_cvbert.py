@@ -320,6 +320,8 @@ def main():
             )
         max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
+    print('max_seq_length', max_seq_length)
+
     if args.line_by_line:
         # When using line_by_line, we just tokenize each nonempty line.
         padding = "max_length" if args.pad_to_max_length else False
@@ -341,7 +343,8 @@ def main():
             tokenize_function,
             batched=True,
             num_proc=args.preprocessing_num_workers,
-            remove_columns=[text_column_name],
+            #remove_columns=[text_column_name],
+            remove_columns=['text','tweet_id','tweet_date','tweet_time','user_id','tweet_type'],
             load_from_cache_file=not args.overwrite_cache,
         )
     else:
@@ -412,7 +415,7 @@ def main():
 
     # Data collator
     # This one will take care of randomly masking the tokens.
-    data_collator = DataCollatorForCVBert(tokenizer=tokenizer, mlm_probability=args.mlm_probability)
+    data_collator = DataCollatorForCVBert(tokenizer=tokenizer, mlm_probability=args.mlm_probability, padding=padding)
 
     # DataLoaders creation:
     train_dataloader = DataLoader(

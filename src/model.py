@@ -21,6 +21,7 @@ import os
 import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
+import numpy as np
 
 import torch
 import torch.utils.checkpoint
@@ -753,6 +754,16 @@ class CVBertOutput(ModelOutput):
    
 
 
+@dataclass
+class CVBertForTrainingOutput(ModelOutput):
+    loss: torch.FloatTensor = None
+    masked_lm_loss: torch.FloatTensor = None
+    elbo_loss: torch.FloatTensor = None
+    prediction_logits: Optional[torch.FloatTensor] = None
+    user_group_logits: Optional[torch.FloatTensor] = None
+
+
+
 class CVBertLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -1302,20 +1313,35 @@ class CVBertForTraining(BertPreTrainedModel):
             broadcasted_user_group_labels = user_group_labels.view(-1, 1).repeat(1, sequence_len).view(1, -1).squeeze()
             print(broadcasted_user_group_labels)
             flattened_user_group_scores = user_group_scores.view(-1, classification_dim)
+            print(flattened_user_group_scores)
+            #FIXME: Is this flattening of the either terms correct?
+
             # because binary vector...
             #BCE = F.binary_cross_entropy(user_group_scores.float(), broadcasted_user_group_labels.float(), reduction='sum')
             #CE = torch.nn.CrossEntropyLoss(user_group_scores, user_group_labels)
 
-            print(flattened_user_group_scores)
+            # I probably need a vectorized y representation and a suitable loss function here
             CEloss = torch.nn.CrossEntropyLoss()
-            CE = CEloss(flattened_user_group_scores, broadcasted_user_group_labels)
+            CE = torch.sum(CEloss(flattened_user_group_scores, broadcasted_user_group_labels))
 
-            kl_weights = torch.minimum(self.training_step / 20000, torch.tensor(1.0))
+            print('CE loss:', CE)
+
+            kl_weights = torch.minimum(self.training_step / 2000, torch.tensor(1.0))
+            print('kl weights:', kl_weights)
             KLD = self.gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
+            print('KLD:', KLD)
 
             elbo_loss = CE + kl_weights * KLD
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+
+            print('elbo loss:', elbo_loss)
+
+            mlm_loss_fct = CrossEntropyLoss()
+            masked_lm_loss = mlm_loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
             total_loss = masked_lm_loss + elbo_loss
+
+            print('total loss:', total_loss)
+
+            #sys.exit(1)
 
             self.training_step += 1
 
@@ -1329,15 +1355,47 @@ class CVBertForTraining(BertPreTrainedModel):
             masked_lm_loss=masked_lm_loss,
             elbo_loss=elbo_loss,
             prediction_logits=prediction_scores,
-            user_group_logits=user_group_scores,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            user_group_logits=user_group_scores
         )
 
 
 
     def gaussian_kld(self, recog_mu, recog_logvar, prior_mu, prior_logvar):
-        kld = -0.5 * tf.reduce_sum(1 + (recog_logvar - prior_logvar)
-                               - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
-                               - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
+        #kld = -0.5 * tf.reduce_sum(1 + (recog_logvar - prior_logvar)
+        #                       - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
+        #                       - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
+
+        kld = torch.tensor([0.0])
+        for ex in range(recog_mu.shape[0]):
+            for token in range(recog_mu.shape[1]):
+                 mu1 = prior_mu[ex,token,:]
+                 mu2 = recog_mu[ex,token,:]
+                 sigma1 = prior_logvar[ex,token,:]
+                 sigma2 = recog_logvar[ex,token,:]
+                 kld += -0.5 * torch.sum(1 + (sigma2 - sigma1) 
+                                 - torch.div(torch.pow(mu1 - mu2, 2), torch.exp(sigma1))
+                                 - torch.div(torch.exp(sigma2), torch.exp(sigma1)), dim=0)
+        return kld / (recog_mu.shape[0] * recog_mu.shape[1])
+
+    '''
+    def gaussian_kld(self, recog_mu, recog_logvar, prior_mu, prior_logvar):
+        kld = 0
+        for ex in range(recog_mu.shape[0]):
+            for token in range(recog_mu.shape[1]):
+                mu1 = recog_mu[ex, token, :].view(-1, 1)
+                mu2 = prior_mu[ex, token, :].view(-1, 1)
+                sigma_1 = recog_logvar[ex, token, :]
+                sigma_2 = prior_logvar[ex, token, :]
+
+                sigma_diag_1 = torch.eye(sigma_1.shape[0]) * sigma_1
+                sigma_diag_2 = torch.eye(sigma_2.shape[0]) * sigma_2
+
+                sigma_diag_2_inv = torch.inverse(sigma_diag_2)
+                kl = 0.5 * (torch.log(torch.det(sigma_diag_2) / torch.det(sigma_diag_2))
+					- mu1.shape[0] + torch.trace(torch.matmul(sigma_diag_2_inv, sigma_diag_1))
+					+ torch.matmul(torch.matmul(torch.transpose(mu2 - mu1, 0, 1), sigma_diag_2_inv), (mu2 - mu1))
+					)
+                kld += kl
+                print('inside kl: ', kl)
         return kld
+      '''

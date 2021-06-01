@@ -739,6 +739,8 @@ class DataCollatorForCVBert:
     mlm: bool = True
     mlm_probability: float = 0.15
     pad_to_multiple_of: Optional[int] = None
+    padding: Union[bool, str, PaddingStrategy] = True
+    max_length: Optional[int] = None
 
     def __post_init__(self):
         if self.mlm and self.tokenizer.mask_token is None:
@@ -772,7 +774,9 @@ class DataCollatorForCVBert:
         
         
         #HANDE: Buraya giriyor. input_ids tensorde zaten oluyor, attention_mask ve special_tokens_mask de var.
-        batch = self.tokenizer.pad(examples, return_tensors="pt", pad_to_multiple_of=self.pad_to_multiple_of)
+        print('self.max_length', self.max_length)
+        print('self.padding', self.padding)
+        batch = self.tokenizer.pad(examples, return_tensors="pt", pad_to_multiple_of=self.pad_to_multiple_of, max_length=self.max_length, padding=True)
 
         batch["user_group_labels"] = batch.pop("user_group")
 
