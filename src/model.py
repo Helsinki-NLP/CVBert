@@ -176,14 +176,11 @@ class CVBertLayer(nn.Module):
 
         # In between we sample z: using z_mean and z_variance, we produce a random variable of size z_dim
 
-        # y-predictor network takes ass input x and the predicted z (this comes from the prior net!)
+        # y-predictor network takes as input x and the predicted z (this comes from the prior net!)
         # this is actually the second component of the prior network in the CVAE schema
         #input is x (hidden size = 768) + z (z_dim)
-        self.y_predictor_net_fc1 = nn.Linear(config.hidden_size + config.z_dim, config.y_hidden_dim)
-        #FIXME: for now y_output_dim != y_dim, because designing as 2-class classification was easier.
-        # Actually these sizes should be the same and something BCELoss over vectors can be used?
-        self.y_predictor_net_fc2 = nn.Linear(config.y_hidden_dim, config.y_output_dim)
-        self.y_dropout = nn.Dropout(config.y_dropout_prob)
+        self.y_predictor_net_fc = nn.Linear(config.hidden_size + config.z_dim, config.y_output_dim)
+
 
         # Takes in a concatenation of x (hidden size = 768) and z, and maps it back to hidden size (768)
         # FIXME: Is this layer necessary? Or even a good idea?
@@ -208,6 +205,12 @@ class CVBertLayer(nn.Module):
     ):
 
 
+
+        # IMPORTANT FIXME: Im removing the initial attention layer from CVBert layer for now
+        # This attention is likely to start with garbage, maybe making learning more difficult
+        # Can also be activated later in the training.
+
+        '''
         #FIXME: What is head mask??? 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -219,7 +222,9 @@ class CVBertLayer(nn.Module):
             past_key_value=self_attn_past_key_value,
         )
         cv_x = cv_attention_outputs[0]
-        
+        '''
+        cv_x = hidden_states
+
         # Sampling z
         post_mu = None
         post_logvar = None
@@ -230,13 +235,13 @@ class CVBertLayer(nn.Module):
             sequence_len = cv_x.shape[1]
             user_group_labels_broadcasted = user_group_labels.view(-1, 1).repeat(1, sequence_len).view(batch_size, sequence_len, 1)
             
-            post_inter = self.z_dropout(F.tanh(self.posterior_net_fc1(torch.cat([cv_x, user_group_labels_broadcasted], dim=2))))
+            post_inter = self.z_dropout(F.relu(self.posterior_net_fc1(torch.cat([cv_x, user_group_labels_broadcasted], dim=2))))
             post_mulogvar = self.posterior_net_fc2(post_inter)
             post_mu, post_logvar = post_mulogvar[:, :, :self.z_dim], post_mulogvar[:, :, self.z_dim:]
 
 
         # prior network is run whether in training or in test:
-        prior_inter = self.z_dropout(F.tanh(self.prior_net_fc1(cv_x)))
+        prior_inter = self.z_dropout(F.relu(self.prior_net_fc1(cv_x)))
         prior_mulogvar = self.prior_net_fc2(prior_inter)
         prior_mu, prior_logvar = prior_mulogvar[:, :, :self.z_dim], prior_mulogvar[:, :, self.z_dim:]
 
@@ -256,12 +261,7 @@ class CVBertLayer(nn.Module):
         z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
 
         # Predicting y
-        y_inter = self.y_dropout(F.tanh(self.y_predictor_net_fc1(torch.cat([cv_x, z_sample_prior], dim=2))))
-        #FIXME: Check the softmax
-        print(self.y_predictor_net_fc2(y_inter))
-        y_prediction = F.softmax(self.y_predictor_net_fc2(y_inter), dim=2) #FIXME
-
-         
+        y_prediction = F.log_softmax(self.y_predictor_net_fc(torch.cat([cv_x, z_sample_prior], dim=2)), dim=2)
 
         # Combining z with hidden representations
         combined_representation = torch.cat([cv_x, z_sample_prior], dim=2)
@@ -331,20 +331,22 @@ class CVBert(BertPreTrainedModel):
         super().__init__(config)
         self.config = config
 
-        pretrained_model = BertModel.from_pretrained('bert-base-uncased')
-        pretrained_model.train()
-
-        #self.embeddings = BertEmbeddings(config)
-        #self.encoder = BertEncoder(config)
+        self.embeddings = BertEmbeddings(config)
+        self.encoder = BertEncoder(config)
         
-        self.embeddings = pretrained_model.embeddings
-        self.encoder = pretrained_model.encoder
 
         self.cv_layer = CVBertLayer(config)
 
         #self.pooler = BertPooler(config) if add_pooling_layer else None
 
-        self.init_weights()
+        self.init_weights() #FIXME; I think I couldnt take the pretrained model initialization properly
+        
+        # Can I here reset to the pretrained model encoder and embeddings?
+        pretrained_model = BertModel.from_pretrained('bert-base-uncased')
+        pretrained_model.train() 
+        self.embeddings = pretrained_model.embeddings
+        self.encoder = pretrained_model.encoder
+        
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -593,9 +595,10 @@ class CVBertForTraining(BertPreTrainedModel):
 
             # FIXME: Nature of this loss function and user_group_scores/user_group_labels
             # needs further thought.
-            #BCE = F.binary_cross_entropy(user_group_scores, user_group_labels, reduction='sum')
 
             # USER GROUP GOLD STANDARD:
+            print(user_group_labels.tolist())
+
             #initial user_group_labels size is [batch_size, 1]
             # broadcast this to [batch_size, sequence_len], and then flatten this
             # FIXME: Maybe design so that we predict one user_group_label (y) for one tweet
@@ -605,32 +608,33 @@ class CVBertForTraining(BertPreTrainedModel):
 
             # USER GROUP PREDICTIONS:
             flattened_user_group_scores = user_group_scores.view(-1, classification_dim)
+            _, predictions = torch.max(user_group_scores[:,0], dim=1) #FIXME: was 2 for token-level y calculation
+            print(predictions.tolist())
             #FIXME: Is this flattening of the either terms correct?
 
             # I probably need a vectorized y representation and a suitable loss function here
-            CEloss = torch.nn.CrossEntropyLoss()
-            y_loss = torch.sum(CEloss(flattened_user_group_scores, broadcasted_user_group_labels))
+            ylossfct = torch.nn.NLLLoss()
+            y_loss = ylossfct(flattened_user_group_scores, broadcasted_user_group_labels)
 
             print('\n\n---- Step: %d -----\n' % self.training_step.item())
             print('y loss:\t\t\t\t%.4f\n' % y_loss.item())
 
             # Suggestion: Dont train with high LR for KLD loss at first, do "annealing"
-            # FIXME: Does this make sense? Is 2000 enough of a scale?
-            kl_weights = torch.minimum(self.training_step / 2000, torch.tensor(1.0))
+            # FIXME: Does this make sense? Is 20000 enough of a scale?
+            kl_weights = torch.minimum(self.training_step / 20000, torch.tensor(1.0))
             #print('kl weights:', kl_weights)
             
             KLD = self.gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
             print('KLD (z) loss:\t\t\t%.4f\n' % KLD.item())
 
             elbo_loss = y_loss + kl_weights * KLD
-
             print('elbo loss (y_loss + kl_weights * KLD): %.4f\n' % elbo_loss.item())
 
             mlm_loss_fct = CrossEntropyLoss()
             masked_lm_loss = mlm_loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
             print('masked_lm_loss:\t\t\t%.4f\n' % masked_lm_loss.item())
-          
-            total_loss = masked_lm_loss + 10 * elbo_loss #FIXME: This 10 may be likely a very bad idea
+             
+            total_loss = masked_lm_loss + elbo_loss #FIXME: This 10 may be likely a very bad idea
 
             print('total loss:\t\t\t%.4f\n' % total_loss.item())
 
@@ -658,14 +662,14 @@ class CVBertForTraining(BertPreTrainedModel):
         #                       - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
         #                       - tf.div(tf.exp(recog_logvar), tf.exp(prior_logvar)), reduction_indices=1)
 
-        kld = torch.tensor([0.0])
+        kld = torch.tensor([0.0]).to('cuda')
         for ex in range(recog_mu.shape[0]):
             for token in range(recog_mu.shape[1]):
-                 mu1 = prior_mu[ex,token,:]
-                 mu2 = recog_mu[ex,token,:]
-                 sigma1 = prior_logvar[ex,token,:]
-                 sigma2 = recog_logvar[ex,token,:]
-                 kld += -0.5 * torch.sum(1 + (sigma2 - sigma1) 
+                 mu1 = prior_mu[ex,token,:].to('cuda')
+                 mu2 = recog_mu[ex,token,:].to('cuda')
+                 sigma1 = prior_logvar[ex,token,:].to('cuda')
+                 sigma2 = recog_logvar[ex,token,:].to('cuda')
+                 kld += torch.tensor([-0.5]).to('cuda') * torch.sum(torch.tensor([1]).to('cuda') + (sigma2 - sigma1) 
                                  - torch.div(torch.pow(mu1 - mu2, 2), torch.exp(sigma1))
                                  - torch.div(torch.exp(sigma2), torch.exp(sigma1)), dim=0)
         return kld / (recog_mu.shape[0] * recog_mu.shape[1])
