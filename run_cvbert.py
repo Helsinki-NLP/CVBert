@@ -76,7 +76,6 @@ def parse_args():
         "--model_name_or_path",
         type=str,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
-        required=True,
     )
     parser.add_argument(
         "--config_name",
@@ -320,8 +319,6 @@ def main():
             )
         max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
-    print('max_seq_length', max_seq_length)
-
     if args.line_by_line:
         # When using line_by_line, we just tokenize each nonempty line.
         padding = "max_length" if args.pad_to_max_length else False
@@ -478,7 +475,7 @@ def main():
     for epoch in range(args.num_train_epochs):
         model.train()
         for step, batch in enumerate(train_dataloader):
-            print(batch)
+            #print(batch)
             outputs = model(**batch)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
@@ -515,7 +512,4 @@ def main():
 
 
 if __name__ == "__main__":
-    #+++HANDE
-    print('**** Hande Changed File ****')
-    #---HANDE
     main()

@@ -89,11 +89,12 @@ class CVBertConfig(PretrainedConfig):
         gradient_checkpointing=False,
         position_embedding_type="absolute",
         use_cache=True,
-        y_dim=50,
-        y_inter_dim=100,
+        y_input_dim=1,
+        y_output_dim=2,
+        y_hidden_dim=50,
         y_dropout_prob=0.1,
-        z_dim=50,
-        z_inter_dim=100,
+        z_dim=10,
+        z_hidden_dim=50,
         z_dropout_prob=0.1,
         **kwargs
     ):
@@ -114,9 +115,10 @@ class CVBertConfig(PretrainedConfig):
         self.gradient_checkpointing = gradient_checkpointing
         self.position_embedding_type = position_embedding_type
         self.use_cache = use_cache
-        self.y_dim = y_dim
-        self.y_inter_dim = y_inter_dim
+        self.y_input_dim = y_input_dim
+        self.y_output_dim = y_output_dim
+        self.y_hidden_dim = y_hidden_dim
         self.y_dropout_prob = y_dropout_prob
         self.z_dim = z_dim
-        self.z_inter_dim = z_inter_dim
+        self.z_hidden_dim = z_hidden_dim
         self.z_dropout_prob = z_dropout_prob
