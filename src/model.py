@@ -243,12 +243,12 @@ class CVBertLayer(nn.Module):
 
 
         # This might be wrong!!
-	'''
+        '''
         if user_group_labels is not None: #during training
             z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
         else: #during test
             z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
-	'''
+        '''
         # Corrected version!
         if user_group_labels is not None: #during training
             z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
@@ -258,7 +258,8 @@ class CVBertLayer(nn.Module):
         # Predicting y
         y_inter = self.y_dropout(F.tanh(self.y_predictor_net_fc1(torch.cat([cv_x, z_sample_prior], dim=2))))
         #FIXME: Check the softmax
-        y_prediction = F.softmax(self.y_predictor_net_fc2(y_inter), dim=1) #FIXME
+        print(self.y_predictor_net_fc2(y_inter))
+        y_prediction = F.softmax(self.y_predictor_net_fc2(y_inter), dim=2) #FIXME
 
          
 
