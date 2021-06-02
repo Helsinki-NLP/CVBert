@@ -91,10 +91,10 @@ class CVBertConfig(PretrainedConfig):
         use_cache=True,
         y_input_dim=1,
         y_output_dim=2,
-        y_hidden_dim=50,
+        y_hidden_dim=500,
         y_dropout_prob=0.1,
         z_dim=30,
-        z_hidden_dim=50,
+        z_hidden_dim=500,
         z_dropout_prob=0.1,
         **kwargs
     ):
