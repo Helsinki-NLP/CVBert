@@ -93,7 +93,7 @@ class CVBertConfig(PretrainedConfig):
         y_output_dim=2,
         y_hidden_dim=50,
         y_dropout_prob=0.1,
-        z_dim=10,
+        z_dim=30,
         z_hidden_dim=50,
         z_dropout_prob=0.1,
         **kwargs
