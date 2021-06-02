@@ -163,29 +163,35 @@ class CVBertLayer(nn.Module):
         self.output = BertOutput(config)
 
         self.cv_attention = CVAttention(config)
+     
+        # posterior network takes input both x (hidden size = 768) and y (training signal about user group)
         self.posterior_net_fc1 = nn.Linear(config.hidden_size + config.y_input_dim, config.z_hidden_dim)
+        # output dim is 2 * z_dim, because outputs both z_mean (size z_dim) and z_variance (also size z_dim)
         self.posterior_net_fc2 = nn.Linear(config.z_hidden_dim,  config.z_dim * 2)
+
+        # prior network takes only x (hidden size = 768)
         self.prior_net_fc1 = nn.Linear(config.hidden_size, config.z_hidden_dim)
         self.prior_net_fc2 = nn.Linear(config.z_hidden_dim, config.z_dim * 2)
         self.z_dropout = nn.Dropout(config.z_dropout_prob)
 
+        # In between we sample z: using z_mean and z_variance, we produce a random variable of size z_dim
+
+        # y-predictor network takes ass input x and the predicted z (this comes from the prior net!)
+        # this is actually the second component of the prior network in the CVAE schema
+        #input is x (hidden size = 768) + z (z_dim)
         self.y_predictor_net_fc1 = nn.Linear(config.hidden_size + config.z_dim, config.y_hidden_dim)
+        #FIXME: for now y_output_dim != y_dim, because designing as 2-class classification was easier.
+        # Actually these sizes should be the same and something BCELoss over vectors can be used?
         self.y_predictor_net_fc2 = nn.Linear(config.y_hidden_dim, config.y_output_dim)
         self.y_dropout = nn.Dropout(config.y_dropout_prob)
 
+        # Takes in a concatenation of x (hidden size = 768) and z, and maps it back to hidden size (768)
+        # FIXME: Is this layer necessary? Or even a good idea?
+        # Meshes information in z and x together. Do we rather want to keep them separate?
         self.combination_fc = nn.Linear(config.hidden_size + config.z_dim, config.hidden_size)
 
         self.z_dim = config.z_dim
 
-        #ikinci attention
-        #phi-MLP
-        #theta-MLP
-        #y-generator-MLP
-        #W_c linear layer
-
-        #ELBO loss hesaplayip donmeli. 
-
-        #Burdan donen deger (1) bir sonraki layer'a, (2) CVBert'e nasil aktariliyor?
 
     def forward(
         self,
@@ -201,22 +207,8 @@ class CVBertLayer(nn.Module):
         user_group_labels=None,
     ):
 
-        '''
-        BertEncoder'in inputu:
-        encoder_outputs = BertEncoder(
-            attention_mask=extended_attention_mask,
-            head_mask=head_mask,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_extended_attention_mask,
-            past_key_values=past_key_values,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            user_group_labels=user_group_labels)
-        '''
 
-        #FIXME: head_mask ne? past_key_value ne?
+        #FIXME: What is head mask??? 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
         cv_attention_outputs = self.cv_attention(
@@ -231,49 +223,50 @@ class CVBertLayer(nn.Module):
         # Sampling z
         post_mu = None
         post_logvar = None
+
+        # If in training, run also the posterior network:
         if user_group_labels is not None:
-            #print(cv_x.shape)
-            #print(user_group_labels.shape)
             batch_size = cv_x.shape[0]
             sequence_len = cv_x.shape[1]
             user_group_labels_broadcasted = user_group_labels.view(-1, 1).repeat(1, sequence_len).view(batch_size, sequence_len, 1)
-            #print(user_group_labels_broadcasted)
-            #print(torch.cat([cv_x, user_group_labels_broadcasted], dim=2).shape)
-            #print(torch.cat([cv_x, user_group_labels_broadcasted], dim=2)[:, :, -1])
-            #import sys
-            #sys.exit(1)
             
             post_inter = self.z_dropout(F.tanh(self.posterior_net_fc1(torch.cat([cv_x, user_group_labels_broadcasted], dim=2))))
             post_mulogvar = self.posterior_net_fc2(post_inter)
             post_mu, post_logvar = post_mulogvar[:, :, :self.z_dim], post_mulogvar[:, :, self.z_dim:]
 
+
+        # prior network is run whether in training or in test:
         prior_inter = self.z_dropout(F.tanh(self.prior_net_fc1(cv_x)))
         prior_mulogvar = self.prior_net_fc2(prior_inter)
         prior_mu, prior_logvar = prior_mulogvar[:, :, :self.z_dim], prior_mulogvar[:, :, self.z_dim:]
 
 
-        if user_group_labels is not None:
-            z_sample = self.sample_gaussian(post_mu, post_logvar)
-        else:
-            z_sample = self.sample_gaussian(prior_mu, prior_logvar)
 
+        # This might be wrong!!
+	'''
+        if user_group_labels is not None: #during training
+            z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
+        else: #during test
+            z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
+	'''
+        # Corrected version!
+        if user_group_labels is not None: #during training
+            z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
+        
+        z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
 
         # Predicting y
-        #print(cv_x.shape)
-        #print(z_sample.shape)
-        y_inter = self.y_dropout(F.tanh(self.y_predictor_net_fc1(torch.cat([cv_x, z_sample], dim=2))))
+        y_inter = self.y_dropout(F.tanh(self.y_predictor_net_fc1(torch.cat([cv_x, z_sample_prior], dim=2))))
         #FIXME: Check the softmax
         y_prediction = F.softmax(self.y_predictor_net_fc2(y_inter), dim=1) #FIXME
 
-        
+         
 
         # Combining z with hidden representations
-        #cv_output_hidden = self.combination_fc(torch.cat[cv_inputs[0], z_sample])
-        combined_representation = torch.cat([cv_x, z_sample], dim=2)
+        combined_representation = torch.cat([cv_x, z_sample_prior], dim=2)
         sequence_output = apply_chunking_to_forward(
             self.feed_forward_chunk, self.chunk_size_feed_forward, self.seq_len_dim, combined_representation
         )
-        #outputs = (layer_output,) + other_outputs
 
         '''
         if output_attentions:
@@ -617,7 +610,7 @@ class CVBertForTraining(BertPreTrainedModel):
             CEloss = torch.nn.CrossEntropyLoss()
             y_loss = torch.sum(CEloss(flattened_user_group_scores, broadcasted_user_group_labels))
 
-            print('\n\n---- Step: %d -----\n', self.training_step.item())
+            print('\n\n---- Step: %d -----\n' % self.training_step.item())
             print('y loss:\t\t\t\t%.4f\n' % y_loss.item())
 
             # Suggestion: Dont train with high LR for KLD loss at first, do "annealing"
@@ -656,7 +649,9 @@ class CVBertForTraining(BertPreTrainedModel):
         )
 
 
-
+    # BIG QUESTION MARK!
+    # Need to check Kullback-Liebler formula for multivariate-Gaussian
+    # And then write this function in a vectorized manner, instead of looping obver batch examples and tokens in input
     def gaussian_kld(self, recog_mu, recog_logvar, prior_mu, prior_logvar):
         #kld = -0.5 * tf.reduce_sum(1 + (recog_logvar - prior_logvar)
         #                       - tf.div(tf.pow(prior_mu - recog_mu, 2), tf.exp(prior_logvar))
