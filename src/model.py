@@ -247,21 +247,14 @@ class CVBertLayer(nn.Module):
 
 
 
-        # This might be wrong!!
-        '''
-        if user_group_labels is not None: #during training
-            z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
-        else: #during test
-            z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
-        '''
-        # Corrected version!
-        if user_group_labels is not None: #during training
-            z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
         
         z_sample_prior = self.sample_gaussian(prior_mu, prior_logvar)
-
-        # Predicting y
-        y_prediction = F.log_softmax(self.y_predictor_net_fc(torch.cat([cv_x, z_sample_prior], dim=2)), dim=2)
+        
+        if user_group_labels is not None: #during training
+            z_sample_posterior = self.sample_gaussian(post_mu, post_logvar)
+            y_prediction = F.log_softmax(self.y_predictor_net_fc(torch.cat([cv_x, z_sample_posterior], dim=2)), dim=2)
+        else:    
+            y_prediction = F.log_softmax(self.y_predictor_net_fc(torch.cat([cv_x, z_sample_prior], dim=2)), dim=2)
 
         # Combining z with hidden representations
         combined_representation = torch.cat([cv_x, z_sample_prior], dim=2)
