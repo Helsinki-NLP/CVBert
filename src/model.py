@@ -589,7 +589,7 @@ class CVBertForTraining(BertPreTrainedModel):
             # needs further thought.
 
             # USER GROUP GOLD STANDARD:
-            print(user_group_labels.tolist())
+            ####AC: print(user_group_labels.tolist())
 
             #initial user_group_labels size is [batch_size, 1]
             # broadcast this to [batch_size, sequence_len], and then flatten this
@@ -601,15 +601,15 @@ class CVBertForTraining(BertPreTrainedModel):
             # USER GROUP PREDICTIONS:
             flattened_user_group_scores = user_group_scores.view(-1, classification_dim)
             _, predictions = torch.max(user_group_scores[:,0], dim=1) #FIXME: was 2 for token-level y calculation
-            print(predictions.tolist())
+            ####AC: print(predictions.tolist())
             #FIXME: Is this flattening of the either terms correct?
 
             # I probably need a vectorized y representation and a suitable loss function here
             ylossfct = torch.nn.NLLLoss()
             y_loss = ylossfct(flattened_user_group_scores, broadcasted_user_group_labels)
 
-            print('\n\n---- Step: %d -----\n' % self.training_step.item())
-            print('y loss:\t\t\t\t%.4f\n' % y_loss.item())
+            ####AC: print('\n\n---- Step: %d -----\n' % self.training_step.item())
+            ####AC: print('y loss:\t\t\t\t%.4f\n' % y_loss.item())
 
             # Suggestion: Dont train with high LR for KLD loss at first, do "annealing"
             # FIXME: Does this make sense? Is 20000 enough of a scale?
@@ -617,18 +617,18 @@ class CVBertForTraining(BertPreTrainedModel):
             #print('kl weights:', kl_weights)
             
             KLD = self.gaussian_kld(post_mu, post_logvar, prior_mu, prior_logvar)
-            print('KLD (z) loss:\t\t\t%.4f\n' % KLD.item())
+            ####AC: print('KLD (z) loss:\t\t\t%.4f\n' % KLD.item())
 
             elbo_loss = y_loss + kl_weights * KLD
-            print('elbo loss (y_loss + kl_weights * KLD): %.4f\n' % elbo_loss.item())
+            ####AC: print('elbo loss (y_loss + kl_weights * KLD): %.4f\n' % elbo_loss.item())
 
             mlm_loss_fct = CrossEntropyLoss()
             masked_lm_loss = mlm_loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
-            print('masked_lm_loss:\t\t\t%.4f\n' % masked_lm_loss.item())
+            ####AC: print('masked_lm_loss:\t\t\t%.4f\n' % masked_lm_loss.item())
              
-            total_loss = masked_lm_loss + elbo_loss #FIXME: This 10 may be likely a very bad idea
-
-            print('total loss:\t\t\t%.4f\n' % total_loss.item())
+            ###total_loss = masked_lm_loss + elbo_loss #FIXME: This 10 may be likely a very bad idea
+            total_loss = y_loss
+            ####AC: print('total loss:\t\t\t%.4f\n' % total_loss.item())
 
             self.training_step += 1
 
